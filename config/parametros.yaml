@@ -1,0 +1,14 @@
+# Archivos de entrada y salida
+archivos:
+  viajes: "datos/raw/yellow_tripdata_2025-01.parquet"
+  zonas: "datos/raw/taxi_zone_lookup.csv"
+  procesados: "datos/procesados/viajes_procesados.parquet"
+  agregados_zonas: "datos/procesados/demanda_por_zona.csv"
+
+# Filtros para la limpieza de datos
+filtros:
+  fecha_inicio: "2025-01-01"
+  fecha_fin: "2025-01-31"
+  viaje_minimo_minutos: 1.0
+  viaje_maximo_minutos: 180.0
+  tarifa_minima: 2.5
