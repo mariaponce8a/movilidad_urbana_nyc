@@ -1,0 +1,5 @@
+ID,Problema,Cantidad,Porcentaje,Severidad,Acción Recomendada,Prioridad
+1,passenger_count nulo,540149,15.54%,ALTA,Imputar la moda (1) o flag,P0
+2,Tarifas negativas,144118,4.1470%,ALTA,Eliminar registros,P0
+3,Distancia = 0,90893,2.62%,MEDIA,Filtrar viajes sin trayecto real,P1
+4,Distancias imposibles (>100),162,0.0047%,ALTA,Eliminar outliers,P1
