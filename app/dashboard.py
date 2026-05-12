@@ -10,21 +10,21 @@ import matplotlib.pyplot as plt
 import pandas as pd
 
 # Configuración de página
-st.set_page_config(page_title="NYC Taxi Mobility Dashboard", layout="wide", page_icon="🚕")
+st.set_page_config(page_title="NYC Taxi Mobility Dashboard", layout="wide")
 
 API_URL = "http://localhost:8000"
 
 st.title("Análisis de Demanda y Predicción de Movilidad - NYC")
-st.markdown("Dashboard interactivo para visualizar puntos calientes (Hotspots) y predecir demanda futura usando modelos de Inteligencia Artificial (Prophet y SARIMA).")
+st.markdown("Dashboard interactivo para visualizar puntos de calor espaciales y predecir demanda futura mediante modelos econométricos y de Inteligencia Artificial (Prophet y SARIMA).")
 
 # --- PANEL LATERAL ---
-st.sidebar.header("⚙️ Controles Globales")
+st.sidebar.header("Controles Globales")
 
-st.sidebar.subheader("📍 Filtros Geoespaciales")
+st.sidebar.subheader("Filtros Geoespaciales")
 selected_hour = st.sidebar.slider("Selecciona la hora del día (Mapa):", min_value=0, max_value=23, value=8, step=1)
 
 st.sidebar.markdown("---")
-st.sidebar.subheader("🤖 Configuración de Predicción (IA)")
+st.sidebar.subheader("Configuración de Predicción")
 # Top 10 Zonas (Hardcoded basado en el análisis para rapidez)
 top10_zones = {
     161: "Midtown Center",
@@ -40,11 +40,11 @@ top10_zones = {
 }
 
 selected_zone = st.sidebar.selectbox("Selecciona una Zona Top 10:", options=list(top10_zones.keys()), format_func=lambda x: f"{x} - {top10_zones[x]}")
-selected_model = st.sidebar.radio("Selecciona el Algoritmo Predictivo:", options=["Prophet", "SARIMA"])
+selected_models = st.sidebar.multiselect("Selecciona Algoritmo(s) Predictivo(s):", options=["Prophet", "SARIMA"], default=["Prophet", "SARIMA"])
 forecast_horizon = st.sidebar.slider("Horizonte de predicción (Horas al futuro):", min_value=12, max_value=168, value=24, step=12)
 
 # --- VISUALIZACIONES PRINCIPALES ---
-tab1, tab2, tab3 = st.tabs(["Mapa Geoespacial", "Patrones Temporales", "Predicción de la Demanda"])
+tab1, tab2, tab3 = st.tabs(["Mapa Geoespacial", "Patrones Temporales", "Inteligencia Artificial"])
 
 # --- PESTAÑA 1: MAPA GEOESPACIAL ---
 with tab1:
@@ -83,7 +83,7 @@ with tab2:
             fig1 = px.bar(df_curve, x="Hora", y="Viajes Totales", color="Viajes Totales",
                          color_continuous_scale="Viridis", 
                          title="Volumen Total de Viajes por Hora en Enero 2025")
-            fig1.update_layout(xaxis=dict(tickmode='linear'))
+            fig1.update_layout(xaxis=dict(tickmode='linear'), template="plotly_white")
             st.plotly_chart(fig1, use_container_width=True)
     except:
         st.warning("No se pudo cargar la curva de demanda.")
@@ -111,31 +111,45 @@ with tab3:
     st.subheader(f"Predicción del Futuro: Zona {selected_zone} ({top10_zones[selected_zone]})")
     st.markdown("Utiliza modelos matemáticos para pronosticar la curva de demanda de las próximas horas/días.")
     
-    if st.button(f"Generar Pronóstico ({selected_model})"):
-        with st.spinner(f"Entrenando modelo {selected_model} en tiempo real y prediciendo {forecast_horizon} horas..."):
-            try:
-                res = requests.get(f"{API_URL}/trips/predict?zone_id={selected_zone}&hours={forecast_horizon}&model={selected_model.lower()}")
-                if res.status_code == 200:
-                    pred_data = res.json()
-                    future_dates = pred_data["future_dates"]
-                    predictions = pred_data["predictions"]
-                    
-                    df_pred = pd.DataFrame({
-                        "Fecha/Hora": pd.to_datetime(future_dates),
-                        "Viajes Predichos": predictions
-                    })
-                    
-                    fig3 = px.line(df_pred, x="Fecha/Hora", y="Viajes Predichos", markers=True,
-                                  title=f"Predicción Oficial ({selected_model}): Próximas {forecast_horizon} horas")
-                    
-                    # Cambiar color según el modelo para consistencia
-                    line_color = "blue" if selected_model == "Prophet" else "red"
-                    fig3.update_traces(line_color=line_color)
-                    
-                    st.plotly_chart(fig3, use_container_width=True)
-                else:
-                    st.error(f"Error de la API: {res.text}")
-            except Exception as e:
-                st.error("Asegúrate de tener la API corriendo.")
+    if st.button("Generar Pronóstico Multimodelo"):
+        if not selected_models:
+            st.warning("Por favor, selecciona al menos un modelo predictivo en el panel lateral.")
+        else:
+            with st.spinner(f"Entrenando modelos y prediciendo {forecast_horizon} horas..."):
+                fig3 = go.Figure()
+                
+                for model in selected_models:
+                    try:
+                        res = requests.get(f"{API_URL}/trips/predict?zone_id={selected_zone}&hours={forecast_horizon}&model={model.lower()}")
+                        if res.status_code == 200:
+                            pred_data = res.json()
+                            df_pred = pd.DataFrame({
+                                "Fecha/Hora": pd.to_datetime(pred_data["future_dates"]),
+                                "Viajes Predichos": pred_data["predictions"]
+                            })
+                            
+                            # Prophet en azul, SARIMA en rojo
+                            color = "blue" if model == "Prophet" else "red"
+                            fig3.add_trace(go.Scatter(
+                                x=df_pred["Fecha/Hora"],
+                                y=df_pred["Viajes Predichos"],
+                                mode='lines+markers',
+                                name=f"{model} Forecast",
+                                line=dict(color=color, width=2)
+                            ))
+                        else:
+                            st.error(f"Error de la API para {model}: {res.text}")
+                    except Exception as e:
+                        st.error(f"Asegúrate de tener la API corriendo. Error conectando para {model}.")
+                
+                fig3.update_layout(
+                    title=f"Comparativa de Modelos Predictivos: Próximas {forecast_horizon} horas",
+                    xaxis_title="Fecha y Hora",
+                    yaxis_title="Volumen de Viajes",
+                    hovermode="x unified",
+                    template="plotly_white",
+                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+                )
+                st.plotly_chart(fig3, use_container_width=True)
     else:
-        st.info("👈 Configura los parámetros en el panel lateral y presiona el botón para entrenar el algoritmo.")
+        st.info("Configura los parámetros en el panel lateral y presiona el botón para entrenar los modelos y generar el pronóstico.")
