@@ -6,3 +6,9 @@ streamlit
 plotly
 pyyaml
 prophet
+scikit-learn
+statsmodels
+fastapi
+uvicorn
+streamlit-folium
+seaborn
