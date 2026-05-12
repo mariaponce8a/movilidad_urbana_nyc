@@ -215,3 +215,4 @@ datos/interim/*
 !datos/interim/.gitkeep
 datos/procesados/*
 !datos/procesados/.gitkeep
+parquet/yellow_tripdata_2025-01.parquet

@@ -3,5 +3,11 @@ geopandas
 pyarrow
 folium
 streamlit
+streamlit-folium
 plotly
+seaborn
+matplotlib
 pyyaml
+fastapi
+uvicorn[standard]
+requests
