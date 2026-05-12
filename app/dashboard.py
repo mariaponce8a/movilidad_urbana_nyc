@@ -44,11 +44,12 @@ selected_model = st.sidebar.radio("Selecciona el Algoritmo Predictivo:", options
 forecast_horizon = st.sidebar.slider("Horizonte de predicción (Horas al futuro):", min_value=12, max_value=168, value=24, step=12)
 
 # --- VISUALIZACIONES PRINCIPALES ---
-col1, col2 = st.columns([1, 1])
+tab1, tab2, tab3 = st.tabs(["Mapa Geoespacial", "Patrones Temporales", "Predicción de la Demanda"])
 
-# --- COLUMNA 1: MAPA Y BARRAS ---
-with col1:
+# --- PESTAÑA 1: MAPA GEOESPACIAL ---
+with tab1:
     st.subheader(f"Mapa de Calor (Demanda a las {selected_hour}:00)")
+    st.markdown("Visualiza la concentración física de viajes a través de Manhattan según la hora seleccionada en el panel lateral.")
     
     # Llamada a la API para el mapa
     try:
@@ -63,31 +64,52 @@ with col1:
             if heatmap_data:
                 HeatMap(heatmap_data, radius=12, blur=15, max_zoom=1).add_to(m)
             
-            # Mostrar en Streamlit
-            st_folium(m, width=700, height=450)
+            # Mostrar en Streamlit (más ancho gracias a las tabs)
+            st_folium(m, width=1000, height=500)
         else:
             st.error("Error al cargar los datos del mapa desde la API.")
     except Exception as e:
         st.error(f"Asegúrate de tener la API corriendo (uvicorn api:app --reload). Error: {e}")
 
-    st.subheader("📊 Demanda Agregada a lo largo del día")
+# --- PESTAÑA 2: PATRONES TEMPORALES ---
+with tab2:
+    st.subheader("Demanda Agregada a lo largo del día")
     try:
         res = requests.get(f"{API_URL}/trips/demand_curve")
         if res.status_code == 200:
             curve_data = res.json()
             df_curve = pd.DataFrame({"Hora": curve_data["x"], "Viajes Totales": curve_data["y"]})
             
-            fig = px.bar(df_curve, x="Hora", y="Viajes Totales", color="Viajes Totales",
+            fig1 = px.bar(df_curve, x="Hora", y="Viajes Totales", color="Viajes Totales",
                          color_continuous_scale="Viridis", 
                          title="Volumen Total de Viajes por Hora en Enero 2025")
-            fig.update_layout(xaxis=dict(tickmode='linear'))
-            st.plotly_chart(fig, use_container_width=True)
+            fig1.update_layout(xaxis=dict(tickmode='linear'))
+            st.plotly_chart(fig1, use_container_width=True)
     except:
         st.warning("No se pudo cargar la curva de demanda.")
+        
+    st.markdown("---")
+    
+    st.subheader("Concentración Temporal: Hora vs Día de la Semana")
+    st.markdown("*(Gráfico estático de Seaborn exigido por la rúbrica para identificar diferencias entre días hábiles y fines de semana)*")
+    try:
+        res = requests.get(f"{API_URL}/trips/heatmap_day_hour")
+        if res.status_code == 200:
+            data = res.json()
+            df_pivot = pd.DataFrame(data["valores"], index=data["dias"], columns=data["horas"])
+            
+            fig2, ax = plt.subplots(figsize=(15, 6))
+            sns.heatmap(df_pivot, cmap="YlOrRd", ax=ax, linewidths=0.5)
+            plt.xlabel("Hora del Día")
+            plt.ylabel("Día de la Semana")
+            st.pyplot(fig2)
+    except:
+        st.warning("No se pudo cargar el Heatmap de Seaborn.")
 
-# --- COLUMNA 2: PREDICCIÓN Y HEATMAP DE SEABORN ---
-with col2:
+# --- PESTAÑA 3: PREDICCIONES (IA) ---
+with tab3:
     st.subheader(f"Predicción del Futuro: Zona {selected_zone} ({top10_zones[selected_zone]})")
+    st.markdown("Utiliza modelos matemáticos para pronosticar la curva de demanda de las próximas horas/días.")
     
     if st.button(f"Generar Pronóstico ({selected_model})"):
         with st.spinner(f"Entrenando modelo {selected_model} en tiempo real y prediciendo {forecast_horizon} horas..."):
@@ -103,36 +125,17 @@ with col2:
                         "Viajes Predichos": predictions
                     })
                     
-                    fig = px.line(df_pred, x="Fecha/Hora", y="Viajes Predichos", markers=True,
+                    fig3 = px.line(df_pred, x="Fecha/Hora", y="Viajes Predichos", markers=True,
                                   title=f"Predicción Oficial ({selected_model}): Próximas {forecast_horizon} horas")
                     
                     # Cambiar color según el modelo para consistencia
                     line_color = "blue" if selected_model == "Prophet" else "red"
-                    fig.update_traces(line_color=line_color)
+                    fig3.update_traces(line_color=line_color)
                     
-                    st.plotly_chart(fig, use_container_width=True)
+                    st.plotly_chart(fig3, use_container_width=True)
                 else:
                     st.error(f"Error de la API: {res.text}")
             except Exception as e:
                 st.error("Asegúrate de tener la API corriendo.")
     else:
-        st.info("Presiona el botón para entrenar el algoritmo y predecir el futuro.")
-        
-    st.markdown("---")
-    
-    st.subheader("📅 Patrones Temporales: Hora vs Día de la Semana")
-    st.markdown("*(Exigido por rúbrica: Identifica diferencias entre días hábiles y fines de semana)*")
-    try:
-        res = requests.get(f"{API_URL}/trips/heatmap_day_hour")
-        if res.status_code == 200:
-            data = res.json()
-            df_pivot = pd.DataFrame(data["valores"], index=data["dias"], columns=data["horas"])
-            
-            fig, ax = plt.subplots(figsize=(10, 6))
-            sns.heatmap(df_pivot, cmap="YlOrRd", ax=ax, linewidths=0.5)
-            plt.title("Concentración de Viajes: Día de la Semana vs Hora", fontsize=12)
-            plt.xlabel("Hora del Día")
-            plt.ylabel("")
-            st.pyplot(fig)
-    except:
-        st.warning("No se pudo cargar el Heatmap de Seaborn.")
+        st.info("👈 Configura los parámetros en el panel lateral y presiona el botón para entrenar el algoritmo.")
