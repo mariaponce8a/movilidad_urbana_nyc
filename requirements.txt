@@ -8,10 +8,7 @@ plotly
 seaborn
 matplotlib
 pyyaml
-<<<<<<< HEAD
 fastapi
 uvicorn[standard]
 requests
-=======
 prophet
->>>>>>> origin/develop
