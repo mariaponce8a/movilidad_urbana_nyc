@@ -1,256 +1,194 @@
-"""
-API FastAPI — Movilidad Urbana NYC
-===================================
-Expone los datos procesados de viajes de taxi amarillo de NYC
-para ser consumidos por el dashboard de Streamlit.
-
-Endpoints:
-  GET /trips/heatmap?hour=8      → Puntos de calor para una hora específica
-  GET /trips/demand_curve        → Serie de demanda agregada por hora del día
-  GET /trips/demand_heatmap      → Tabla pivote hora × día de semana
-  GET /health                    → Estado de la API
-
-Uso:
-  uvicorn app.api:app --reload --port 8000
-  (ejecutar desde la raíz del proyecto)
-"""
-
-import os
-import json
-import logging
-from pathlib import Path
-from functools import lru_cache
-from typing import List
-
-import pandas as pd
-import geopandas as gpd
 from fastapi import FastAPI, Query, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
+import pandas as pd
+import numpy as np
+from prophet import Prophet
+from statsmodels.tsa.statespace.sarimax import SARIMAX
+import warnings
+import os
 
-# ---------------------------------------------------------------------------
-# Configuración de logging
-# ---------------------------------------------------------------------------
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+warnings.filterwarnings("ignore")
 
-# ---------------------------------------------------------------------------
-# Rutas de datos (relativas a la raíz del proyecto)
-# ---------------------------------------------------------------------------
-BASE_DIR = Path(__file__).resolve().parent.parent
-RUTA_VIAJES = BASE_DIR / "datos" / "procesados" / "viajes_procesados.parquet"
-RUTA_DEMANDA = BASE_DIR / "datos" / "procesados" / "demanda_por_zona.csv"
-RUTA_GEOJSON = BASE_DIR / "datos" / "raw" / "taxi_zones.geojson"
-
-# Columnas mínimas que necesitamos del parquet (ahorra memoria)
-COLUMNAS_PARQUET = ["PULocationID", "hora_dia", "dia_semana"]
-
-# Nombres legibles de días de la semana
-DIAS_SEMANA = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]
-
-# ---------------------------------------------------------------------------
-# Inicialización de FastAPI
-# ---------------------------------------------------------------------------
 app = FastAPI(
-    title="🚕 Movilidad Urbana NYC — API",
-    description=(
-        "API para análisis de patrones de movilidad urbana en Nueva York "
-        "basada en datos de taxis amarillos (Yellow Cab TLC)."
-    ),
+    title="NYC Taxi Mobility API",
+    description="API REST para el análisis geoespacial y predictivo de la demanda de taxis en Nueva York (Caso 04).",
     version="1.0.0",
 )
 
-# CORS: permite que Streamlit (en otro puerto) consuma esta API
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["GET"],
-    allow_headers=["*"],
-)
+# --- CARGA DE DATOS EN MEMORIA ---
+# Se cargan al iniciar la API para que las peticiones sean ultrarrápidas
+DATA_PATH = os.path.join(os.path.dirname(__file__), "..", "datos", "procesados")
 
-# ---------------------------------------------------------------------------
-# Carga de datos al iniciar la aplicación (se hace una sola vez)
-# ---------------------------------------------------------------------------
-_viajes: pd.DataFrame = None
-_centroides: dict = {}     # {LocationID: [lat, lon]}
-
-
-@app.on_event("startup")
-async def cargar_datos():
-    """Carga los datasets al arrancar la API para evitar lecturas repetidas."""
-    global _viajes, _centroides
-
-    # 1. Datos de viajes procesados
-    if not RUTA_VIAJES.exists():
-        logger.warning(f"Archivo no encontrado: {RUTA_VIAJES}. "
-                       "Ejecuta el pipeline primero: python scripts/pipeline.py")
-    else:
-        logger.info("Cargando viajes procesados...")
-        _viajes = pd.read_parquet(RUTA_VIAJES, columns=COLUMNAS_PARQUET)
-        # Aseguramos tipos correctos
-        _viajes["hora_dia"] = _viajes["hora_dia"].astype(int)
-        _viajes["dia_semana"] = _viajes["dia_semana"].astype(int)
-        logger.info(f"✅ Viajes cargados: {len(_viajes):,} registros")
-
-    # 2. Centroides de zonas TLC desde GeoJSON
-    if not RUTA_GEOJSON.exists():
-        logger.warning(f"GeoJSON no encontrado: {RUTA_GEOJSON}")
-    else:
-        logger.info("Cargando zonas TLC...")
-        gdf = gpd.read_file(RUTA_GEOJSON)
-
-        # Calcular centroide de cada zona en CRS geográfico (lat/lon)
-        gdf = gdf.to_crs(epsg=4326)
-        gdf["centroid"] = gdf.geometry.centroid
-        gdf["lat"] = gdf["centroid"].y
-        gdf["lon"] = gdf["centroid"].x
-
-        # Guardar en dict {LocationID: [lat, lon]}
-        # El GeoJSON de TLC usa la columna "LocationID"
-        id_col = "LocationID" if "LocationID" in gdf.columns else "objectid"
-        for _, row in gdf.iterrows():
-            try:
-                loc_id = int(row[id_col])
-                _centroides[loc_id] = [float(row["lat"]), float(row["lon"])]
-            except (ValueError, KeyError):
-                continue
-        logger.info(f"✅ Centroides cargados: {len(_centroides)} zonas")
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-def _verificar_datos():
-    """Lanza HTTPException si los datos no están cargados."""
-    if _viajes is None or _viajes.empty:
-        raise HTTPException(
-            status_code=503,
-            detail=(
-                "Datos no disponibles. "
-                "Ejecuta el pipeline primero: python scripts/pipeline.py"
-            ),
-        )
-
-
-# ---------------------------------------------------------------------------
-# Endpoints
-# ---------------------------------------------------------------------------
-
-@app.get("/health", tags=["Status"])
-def health_check():
-    """Verifica que la API está en línea y los datos están cargados."""
-    return {
-        "status": "ok",
-        "viajes_cargados": _viajes is not None,
-        "total_viajes": len(_viajes) if _viajes is not None else 0,
-        "zonas_con_centroide": len(_centroides),
-    }
-
-
-@app.get("/trips/heatmap", tags=["Mapas"])
-def heatmap_por_hora(
-    hour: int = Query(
-        default=8,
-        ge=0,
-        le=23,
-        description="Hora del día (0–23) para filtrar los viajes",
+try:
+    df_geo = pd.read_parquet(os.path.join(DATA_PATH, "demanda_geo_agregada.parquet"))
+    df_ts = pd.read_parquet(
+        os.path.join(DATA_PATH, "demanda_top10_series_tiempo.parquet")
     )
+except FileNotFoundError:
+    print("Error: No se encontraron los archivos Parquet en datos/procesados/")
+    df_geo = pd.DataFrame()
+    df_ts = pd.DataFrame()
+
+
+@app.get("/", tags=["Health"])
+def root():
+    return {"status": "ok", "message": "NYC Taxi Mobility API is running"}
+
+
+@app.get("/trips/heatmap", tags=["Geoespacial"])
+def get_heatmap_data(
+    hour: int = Query(..., ge=0, le=23, description="Hora del día (0-23)"),
 ):
     """
-    Retorna los puntos de calor (lat, lon, peso) para una hora específica.
-
-    Cada punto representa una zona TLC con su centroide geográfico y el
-    número de viajes en esa zona durante la hora indicada como peso.
-    El mapa de calor de Folium usa esta lista directamente.
-
-    Ejemplo: GET /trips/heatmap?hour=8
+    Retorna la lista de coordenadas y pesos para el mapa de calor de Folium.
+    La rúbrica exige que se entreguen los puntos de recogida de una hora específica.
     """
-    _verificar_datos()
+    if df_geo.empty:
+        raise HTTPException(status_code=500, detail="Data not loaded")
 
-    if not _centroides:
+    # Filtrar por hora
+    df_hour = df_geo[df_geo["hora_dia"] == hour]
+
+    # Agrupar por coordenada binificada para el heatmap
+    heatmap_data = df_hour.groupby(["lat_bin", "lon_bin"])["viajes"].sum().reset_index()
+
+    # Formato requerido por Folium: [lat, lon, weight]
+    points = heatmap_data[["lat_bin", "lon_bin", "viajes"]].values.tolist()
+
+    return {"hour": hour, "total_points": len(points), "data": points}
+
+
+@app.get("/trips/demand_curve", tags=["Temporal"])
+def get_demand_curve():
+    """
+    Serie de demanda por hora del día.
+    Agrupa todos los viajes por cada una de las 24 horas.
+    """
+    if df_geo.empty:
+        raise HTTPException(status_code=500, detail="Data not loaded")
+
+    curve = df_geo.groupby("hora_dia")["viajes"].sum().reset_index()
+
+    return {"x": curve["hora_dia"].tolist(), "y": curve["viajes"].tolist()}
+
+
+@app.get("/trips/heatmap_day_hour", tags=["Temporal"])
+def get_heatmap_day_hour():
+    """
+    Retorna los datos estructurados para crear el Heatmap de Seaborn (Día vs Hora).
+    """
+    if df_geo.empty:
+        raise HTTPException(status_code=500, detail="Data not loaded")
+
+    pivot = df_geo.pivot_table(
+        index="dia_semana",
+        columns="hora_dia",
+        values="viajes",
+        aggfunc="sum",
+        fill_value=0,
+    )
+
+    # Ordenar los días lógicamente
+    dias_ordenados = [
+        "Monday",
+        "Tuesday",
+        "Wednesday",
+        "Thursday",
+        "Friday",
+        "Saturday",
+        "Sunday",
+    ]
+    pivot = pivot.reindex(dias_ordenados)
+
+    return {
+        "dias": pivot.index.tolist(),
+        "horas": pivot.columns.tolist(),
+        "valores": pivot.values.tolist(),
+    }
+
+
+@app.get("/trips/predict", tags=["Predicción (ML)"])
+def predict_demand(
+    zone_id: int = Query(
+        237, description="ID de la zona de taxi (Ej: 237 para Upper East Side)"
+    ),
+    hours: int = Query(
+        24, ge=12, le=168, description="Horizonte de predicción en horas (12h a 7 días)"
+    ),
+    model: str = Query("prophet", description="Modelo a usar: 'prophet' o 'sarima'"),
+):
+    """
+    Genera un pronóstico de la demanda de viajes para una zona específica.
+    """
+    if df_ts.empty:
+        raise HTTPException(status_code=500, detail="Time series data not loaded")
+
+    # Extraer data de la zona
+    df_zone = df_ts[df_ts["PULocationID"] == zone_id][["hora", "total_viajes"]].copy()
+    if df_zone.empty:
         raise HTTPException(
-            status_code=503,
-            detail="Centroides de zonas no disponibles. Verifica taxi_zones.geojson."
+            status_code=404, detail=f"Zone ID {zone_id} not found in the Top 10 dataset"
         )
 
-    # Filtrar viajes de la hora solicitada y contar por zona
-    df_hora = _viajes[_viajes["hora_dia"] == hour]
-    conteo = df_hora.groupby("PULocationID").size().reset_index(name="viajes")
+    df_zone.set_index("hora", inplace=True)
+    df_zone.sort_index(inplace=True)
 
-    # Construir lista de puntos [lat, lon, peso]
-    puntos: List[List[float]] = []
-    for _, row in conteo.iterrows():
-        loc_id = int(row["PULocationID"])
-        if loc_id in _centroides:
-            lat, lon = _centroides[loc_id]
-            peso = float(row["viajes"])
-            puntos.append([lat, lon, peso])
+    predictions = []
+    future_dates = []
 
-    return {
-        "hora": hour,
-        "total_puntos": len(puntos),
-        "puntos": puntos,  # [[lat, lon, peso], ...]
-    }
+    if model.lower() == "prophet":
+        try:
+            # Preparar data para Prophet
+            df_p = df_zone.reset_index().rename(
+                columns={"hora": "ds", "total_viajes": "y"}
+            )
+            m = Prophet(
+                yearly_seasonality=False,
+                weekly_seasonality=True,
+                daily_seasonality=True,
+            )
+            m.fit(df_p)
 
+            future = m.make_future_dataframe(periods=hours, freq="h")
+            forecast = m.predict(future)
 
-@app.get("/trips/demand_curve", tags=["Análisis temporal"])
-def curva_de_demanda():
-    """
-    Retorna la demanda total de viajes agregada por hora del día (0–23).
+            # Extraer solo el futuro
+            future_forecast = forecast.tail(hours)
+            future_dates = future_forecast["ds"].astype(str).tolist()
+            predictions = (
+                future_forecast["yhat"].clip(lower=0).round(0).tolist()
+            )  # No viajes negativos
+        except Exception as e:
+            import traceback
 
-    Útil para el gráfico de barras que muestra los picos de actividad
-    durante el día (horas punta de mañana y tarde/noche).
+            error_details = traceback.format_exc()
+            raise HTTPException(
+                status_code=500, detail=f"Error Prophet: {str(e)}\n{error_details}"
+            )
 
-    Ejemplo: GET /trips/demand_curve
-    """
-    _verificar_datos()
+    elif model.lower() == "sarima":
+        # SARIMA toma más tiempo, pero lo entrenamos on the fly
+        try:
+            m_sarima = SARIMAX(
+                df_zone["total_viajes"], order=(1, 0, 1), seasonal_order=(1, 0, 1, 24)
+            )
+            res = m_sarima.fit(disp=False)
 
-    demanda = (
-        _viajes.groupby("hora_dia")
-        .size()
-        .reset_index(name="total_viajes")
-        .sort_values("hora_dia")
-    )
-
-    return {
-        "datos": [
-            {"hora": int(row["hora_dia"]), "total_viajes": int(row["total_viajes"])}
-            for _, row in demanda.iterrows()
-        ]
-    }
-
-
-@app.get("/trips/demand_heatmap", tags=["Análisis temporal"])
-def heatmap_hora_dia_semana():
-    """
-    Retorna la demanda agregada en una tabla pivote hora × día de semana.
-
-    Permite construir el heatmap de Seaborn que identifica:
-    - Picos horarios (mañana/tarde-noche)
-    - Diferencias entre días hábiles (0–4) y fines de semana (5–6)
-
-    Ejemplo: GET /trips/demand_heatmap
-    """
-    _verificar_datos()
-
-    demanda = (
-        _viajes.groupby(["hora_dia", "dia_semana"])
-        .size()
-        .reset_index(name="total_viajes")
-    )
-
-    # Convertir a lista de registros
-    registros = [
-        {
-            "hora": int(r["hora_dia"]),
-            "dia_semana": int(r["dia_semana"]),
-            "nombre_dia": DIAS_SEMANA[int(r["dia_semana"])],
-            "total_viajes": int(r["total_viajes"]),
-        }
-        for _, r in demanda.iterrows()
-    ]
+            pred = res.forecast(steps=hours)
+            future_dates = pred.index.astype(str).tolist()
+            predictions = pred.clip(lower=0).round(0).tolist()
+        except Exception as e:
+            raise HTTPException(
+                status_code=500, detail=f"Error entrenando SARIMA: {str(e)}"
+            )
+    else:
+        raise HTTPException(
+            status_code=400, detail="Modelo no soportado. Usa 'prophet' o 'sarima'"
+        )
 
     return {
-        "dias_semana": DIAS_SEMANA,
-        "datos": registros,
+        "zone_id": zone_id,
+        "model_used": model.lower(),
+        "horizon_hours": hours,
+        "future_dates": future_dates,
+        "predictions": predictions,
     }

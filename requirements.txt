@@ -12,3 +12,9 @@ fastapi
 uvicorn[standard]
 requests
 prophet
+scikit-learn
+statsmodels
+fastapi
+uvicorn
+streamlit-folium
+seaborn
