@@ -27,3 +27,22 @@ Para instalar las dependencias necesarias y reproducir este proyecto, ejecuta:
 ```bash
 pip install -r requirements.txt
 ```
+
+## Ejecución del Proyecto (Fase 6)
+El producto analítico está diseñado bajo una arquitectura cliente-servidor real.
+
+**1. Levantar la API (Backend):**
+En una terminal, ubícate en la carpeta del proyecto y ejecuta:
+```bash
+cd app
+uvicorn api:app --reload
+```
+*(Puedes ver la documentación interactiva Swagger en `http://localhost:8000/docs`)*
+
+**2. Levantar el Dashboard (Frontend):**
+Abre una **segunda terminal**, ubícate en la carpeta del proyecto y ejecuta:
+```bash
+cd app
+streamlit run dashboard.py
+```
+*(El dashboard interactivo se abrirá en tu navegador web automáticamente).*

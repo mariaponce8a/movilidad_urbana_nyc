@@ -44,7 +44,7 @@ selected_models = st.sidebar.multiselect("Selecciona Algoritmo(s) Predictivo(s):
 forecast_horizon = st.sidebar.slider("Horizonte de predicción (Horas al futuro):", min_value=12, max_value=168, value=24, step=12)
 
 # --- VISUALIZACIONES PRINCIPALES ---
-tab1, tab2, tab3 = st.tabs(["Mapa Geoespacial", "Patrones Temporales", "Inteligencia Artificial"])
+tab1, tab2, tab3 = st.tabs(["Mapa Geoespacial", "Patrones Temporales", "Predicción de Demanda"])
 
 # --- PESTAÑA 1: MAPA GEOESPACIAL ---
 with tab1:
