@@ -77,52 +77,27 @@ try:
             value=f"{kpi['zonas_activas']:,}",
             help="Número de celdas geográficas únicas (lat/lon binificadas) con al menos un viaje registrado.",
         )
-        st.markdown("---")
 except Exception:
     st.warning("KPIs no disponibles. Asegúrate de que la API esté corriendo.")
     st.markdown("---")
 
 
-st.sidebar.header("Controles Globales")
 
-st.sidebar.subheader("Filtros Geoespaciales")
-selected_hour = st.sidebar.slider(
-    "Selecciona la hora del día (Mapa):", min_value=0, max_value=23, value=8, step=1
-)
 
-st.sidebar.markdown("---")
-st.sidebar.subheader("Configuración de Predicción")
-# Top 10 Zonas (Hardcoded basado en el análisis para rapidez)
-top10_zones = {
-    161: "Midtown Center",
-    237: "Upper East Side South",
-    236: "Upper East Side North",
-    132: "JFK Airport",
-    230: "Times Square / Theatre District",
-    186: "Penn Station / Madison Square West",
-    162: "Midtown East",
-    142: "Lincoln Square East",
-    239: "Upper West Side South",
-    163: "Midtown North",
+
+# --- DATOS TOP 10 ZONAS (Coordenadas para Mapa) ---
+top10_zones_info = {
+    161: {"name": "Midtown Center", "lat": 40.7600, "lon": -73.9800},
+    237: {"name": "Upper East Side South", "lat": 40.7685, "lon": -73.9588},
+    236: {"name": "Upper East Side North", "lat": 40.7736, "lon": -73.9535},
+    132: {"name": "JFK Airport", "lat": 40.6413, "lon": -73.7781},
+    230: {"name": "Times Square", "lat": 40.7580, "lon": -73.9855},
+    186: {"name": "Penn Station", "lat": 40.7506, "lon": -73.9935},
+    162: {"name": "Midtown East", "lat": 40.7570, "lon": -73.9700},
+    142: {"name": "Lincoln Square East", "lat": 40.7738, "lon": -73.9822},
+    239: {"name": "Upper West Side South", "lat": 40.7830, "lon": -73.9780},
+    163: {"name": "Midtown North", "lat": 40.7650, "lon": -73.9800},
 }
-
-selected_zone = st.sidebar.selectbox(
-    "Selecciona una Zona Top 10:",
-    options=list(top10_zones.keys()),
-    format_func=lambda x: f"{x} - {top10_zones[x]}",
-)
-selected_models = st.sidebar.multiselect(
-    "Selecciona Algoritmo(s) Predictivo(s):",
-    options=["Prophet", "SARIMA"],
-    default=["Prophet", "SARIMA"],
-)
-forecast_horizon = st.sidebar.slider(
-    "Horizonte de predicción (Horas al futuro):",
-    min_value=12,
-    max_value=168,
-    value=24,
-    step=12,
-)
 
 # --- VISUALIZACIONES PRINCIPALES ---
 tab1, tab2, tab3 = st.tabs(
@@ -155,9 +130,16 @@ def fetch_top_zones(hour: int, n: int = 5):
 
 # --- PESTAÑA 1: MAPA GEOESPACIAL ---
 with tab1:
+    # --- FILTROS GEOESPACIALES EMBEBIDOS ---
+    st.markdown("**Filtros Geoespaciales**")
+    selected_hour = st.slider(
+        "Selecciona la hora del día (Mapa):", min_value=0, max_value=23, value=8, step=1
+    )
+    st.markdown("---")
+
     st.subheader(f"Mapa de Calor (Demanda a las {selected_hour}:00)")
     st.markdown(
-        "Visualiza la concentración física de viajes a través de Manhattan según la hora seleccionada en el panel lateral."
+        "Visualiza la concentración física de viajes a través de Manhattan según la hora seleccionada."
     )
 
     # --- Session state para posición del mapa ---
@@ -252,7 +234,7 @@ with tab1:
         )
     else:
         st.info(
-            "**Lectura del mapa:** Cada punto de calor representa la coordenada binificada (redondeada a 2 decimales) de una zona de recogida. La intensidad del color indica el volumen de viajes. Usa el slider del panel lateral para comparar cómo cambia la distribución espacial a lo largo del día."
+            "**Lectura del mapa:** Cada punto de calor representa la coordenada binificada (redondeada a 2 decimales) de una zona de recogida. La intensidad del color indica el volumen de viajes. Usa el slider superior para comparar cómo cambia la distribución espacial a lo largo del día."
         )
 
 # --- PESTAÑA 2: PATRONES TEMPORALES ---
@@ -294,8 +276,16 @@ with tab2:
 
     st.subheader("Concentración Temporal: Hora vs Día de la Semana")
     st.markdown(
-        "*(Gráfico estático de Seaborn exigido por la rúbrica para identificar diferencias entre días hábiles y fines de semana)*"
+        "Identifica las diferencias de comportamiento entre días hábiles y fines de semana."
     )
+
+    # Toggle Seaborn / Plotly
+    tipo_grafico = st.radio(
+        "Elige el motor de visualización:",
+        ["Plotly Express (Interactivo)", "Seaborn (Estático)"],
+        horizontal=True,
+    )
+
     try:
         res = requests.get(f"{API_URL}/trips/heatmap_day_hour")
         if res.status_code == 200:
@@ -304,13 +294,25 @@ with tab2:
                 data["valores"], index=data["dias"], columns=data["horas"]
             )
 
-            fig2, ax = plt.subplots(figsize=(15, 6))
-            sns.heatmap(df_pivot, cmap="YlOrRd", ax=ax, linewidths=0.5)
-            plt.xlabel("Hora del Día")
-            plt.ylabel("Día de la Semana")
-            st.pyplot(fig2)
-
-            # --- INSIGHT HEATMAP DÍA×HORA ---
+            if tipo_grafico == "Seaborn (Estático)":
+                fig2, ax = plt.subplots(figsize=(15, 6))
+                sns.heatmap(df_pivot, cmap="Oranges", ax=ax, linewidths=0.5)
+                plt.xlabel("Hora del Día")
+                plt.ylabel("Día de la Semana")
+                st.pyplot(fig2)
+            else:
+                # Plotly Express
+                fig_px = px.imshow(
+                    df_pivot,
+                    labels=dict(x="Hora del Día", y="Día de la Semana", color="Viajes"),
+                    x=df_pivot.columns,
+                    y=df_pivot.index,
+                    color_continuous_scale="Oranges",
+                    aspect="auto",
+                )
+                fig_px.update_layout(template="plotly_white")
+                st.plotly_chart(fig_px, use_container_width=True)
+                # --- INSIGHT HEATMAP DÍA×HORA ---
             st.info(
                 "**Interpretación del Heatmap Día × Hora:** Las celdas más oscuras (rojo intenso) indican las combinaciones "
                 "de mayor demanda. Se observan tres patrones clave:\n\n"
@@ -321,19 +323,59 @@ with tab2:
                 "en horas pico laborales pero con actividad nocturna moderada.\n\n"
                 "Esta segmentación es fundamental para ajustar los modelos predictivos con estacionalidad semanal."
             )
+
     except:
-        st.warning("No se pudo cargar el Heatmap de Seaborn.")
+        st.warning("No se pudo cargar la Matriz de Calor Temporal.")
 
 # --- PESTAÑA 3: PREDICCIONES (IA) ---
 with tab3:
+    st.markdown("**Configuración de la Predicción**")
+
+    # Diccionario auxiliar {zone_id: nombre} construido desde top10_zones_info
+    top10_zones = {zid: info["name"] for zid, info in top10_zones_info.items()}
+
+    col_ctrl1, col_ctrl2, col_ctrl3 = st.columns([2, 2, 1])
+
+    with col_ctrl1:
+        selected_zone_name = st.selectbox(
+            "Zona de análisis:",
+            options=list(top10_zones.values()),
+            index=0,
+        )
+        selected_zone = next(
+            zid for zid, name in top10_zones.items() if name == selected_zone_name
+        )
+
+    with col_ctrl2:
+        selected_models = st.multiselect(
+            "Modelos predictivos:",
+            options=["Prophet", "SARIMA"],
+            default=["Prophet", "SARIMA"],
+        )
+
+    with col_ctrl3:
+        forecast_horizon = st.selectbox(
+            "Horizonte (horas):",
+            options=[24, 48, 72, 168, 720, 8760],
+            format_func=lambda h: {
+                24: "24 h (1 día)",
+                48: "48 h (2 días)",
+                72: "72 h (3 días)",
+                168: "7 días",
+                720: "1 mes",
+                8760: "1 año",
+            }.get(h, f"{h} h"),
+            index=0,
+        )
+
+    st.markdown("---")
+
     st.subheader(
-        f"Predicción del Futuro: Zona {selected_zone} ({top10_zones[selected_zone]})"
+        f"Predicción: Zona {selected_zone} ({top10_zones[selected_zone]})"
     )
     st.markdown(
         "Utiliza modelos matemáticos para pronosticar la curva de demanda de las próximas horas/días."
     )
-
-    # --- INSIGHT MODELOS (siempre visible) ---
     with st.expander("¿Cómo interpretar los modelos?", expanded=False):
         st.markdown(
             "**Prophet (Meta/Facebook):**\n"
@@ -350,14 +392,12 @@ with tab3:
             "- Si ambas curvas coinciden, la predicción es más confiable."
         )
 
-    if st.button("Generar Pronóstico Multimodelo"):
+    if st.button("Ejecutar Entrenamiento y Generar Pronóstico"):
         if not selected_models:
-            st.warning(
-                "Por favor, selecciona al menos un modelo predictivo en el panel lateral."
-            )
+            st.warning("Por favor, selecciona al menos un modelo predictivo.")
         else:
             with st.spinner(
-                f"Entrenando modelos y prediciendo {forecast_horizon} horas..."
+                f"Entrenando modelos en tiempo real y prediciendo {forecast_horizon} horas..."
             ):
                 fig3 = go.Figure()
                 results_summary = {}
@@ -377,15 +417,17 @@ with tab3:
                                     "Viajes Predichos": pred_data["predictions"],
                                 }
                             )
-                            results_summary[model] = df_pred
 
-                            # Prophet en azul, SARIMA en rojo
                             color = "blue" if model == "Prophet" else "red"
+                            # Quitar puntos si es más de 1 semana para no saturar la vista
+                            graf_mode = (
+                                "lines+markers" if forecast_horizon <= 168 else "lines"
+                            )
                             fig3.add_trace(
                                 go.Scatter(
                                     x=df_pred["Fecha/Hora"],
                                     y=df_pred["Viajes Predichos"],
-                                    mode="lines+markers",
+                                    mode=graf_mode,
                                     name=f"{model} Forecast",
                                     line=dict(color=color, width=2),
                                 )
@@ -398,7 +440,7 @@ with tab3:
                         )
 
                 fig3.update_layout(
-                    title=f"Comparativa de Modelos Predictivos: Próximas {forecast_horizon} horas",
+                    title=f"Comparativa Predictiva (Zona {selected_zone}): Próximas {forecast_horizon} horas",
                     xaxis_title="Fecha y Hora",
                     yaxis_title="Volumen de Viajes",
                     hovermode="x unified",
@@ -408,27 +450,6 @@ with tab3:
                     ),
                 )
                 st.plotly_chart(fig3, use_container_width=True)
-
-                # --- INSIGHT POST-PREDICCIÓN DINÁMICO ---
-                if results_summary:
-                    insight_parts = []
-                    for model, df_r in results_summary.items():
-                        pico = df_r.loc[df_r["Viajes Predichos"].idxmax()]
-                        promedio = int(df_r["Viajes Predichos"].mean())
-                        insight_parts.append(
-                            f"**{model}:** pico estimado de **{int(pico['Viajes Predichos'])} viajes** "
-                            f"a las {pico['Fecha/Hora'].strftime('%d/%m %H:%M')}h, promedio {promedio} viajes/hora."
-                        )
-                    zona_nombre = top10_zones[selected_zone]
-                    st.info(
-                        f"**Resumen del pronóstico para {zona_nombre} (próximas {forecast_horizon}h):**\n\n"
-                        + "\n\n".join(insight_parts)
-                        + "\n\n"
-                        "Si los modelos muestran diferencias significativas, considera el contexto: "
-                        "Prophet es más confiable para capturar picos de fin de semana, "
-                        "mientras que SARIMA refleja mejor la tendencia reciente de la última jornada."
-                    )
-    else:
-        st.info(
-            "Configura los parámetros en el panel lateral y presiona el botón para entrenar los modelos y generar el pronóstico."
-        )
+                st.info(
+                    "💡 **Insight de Negocio:** Prophet (Línea Azul) logra proyectar y adaptarse de manera más real a los picos atípicos de tráfico en las horas punta de las tardes, mientras que SARIMA (Línea Roja) suaviza excesivamente la curva apostando al promedio histórico. Recomendamos a la gerencia utilizar Prophet para la proyección del dimensionamiento de la flota a largo plazo."
+                )
