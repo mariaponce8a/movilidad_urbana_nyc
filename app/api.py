@@ -28,10 +28,83 @@ except FileNotFoundError:
     df_geo = pd.DataFrame()
     df_ts = pd.DataFrame()
 
+# Cargar lookup de zonas para nombres
+RAW_PATH = os.path.join(os.path.dirname(__file__), "..", "datos", "raw")
+try:
+    df_lookup = pd.read_csv(os.path.join(RAW_PATH, "taxi_zone_lookup.csv"))
+except Exception:
+    df_lookup = pd.DataFrame()
+
 
 @app.get("/", tags=["Health"])
 def root():
     return {"status": "ok", "message": "NYC Taxi Mobility API is running"}
+
+
+@app.get("/trips/kpis", tags=["KPIs"])
+def get_kpis():
+    """
+    Calcula y retorna los KPIs generales del dataset de enero 2025.
+    """
+    if df_geo.empty or df_ts.empty:
+        raise HTTPException(status_code=500, detail="Data not loaded")
+
+    # --- KPI 1: Total de viajes en el período ---
+    total_viajes = int(df_geo["viajes"].sum())
+
+    # --- KPI 2: Promedio diario (enero = 31 días) ---
+    promedio_diario = round(total_viajes / 31, 0)
+
+    # --- KPI 3: Hora pico (mayor volumen agregado) ---
+    by_hour = df_geo.groupby("hora_dia")["viajes"].sum()
+    hora_pico = int(by_hour.idxmax())
+    viajes_hora_pico = int(by_hour.max())
+
+    # --- KPI 4: Hora valle (menor volumen) ---
+    hora_valle = int(by_hour.idxmin())
+    viajes_hora_valle = int(by_hour.min())
+
+    # --- KPI 5: Ratio pico/valle ---
+    ratio_pico_valle = round(viajes_hora_pico / max(viajes_hora_valle, 1), 1)
+
+    # --- KPI 6: Variación fin de semana vs día hábil ---
+    dias_habiles = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
+    dias_finde = ["Saturday", "Sunday"]
+    avg_habiles = df_geo[df_geo["dia_semana"].isin(dias_habiles)]["viajes"].sum() / 5
+    avg_finde = df_geo[df_geo["dia_semana"].isin(dias_finde)]["viajes"].sum() / 2
+    variacion_finde_pct = round(((avg_finde - avg_habiles) / avg_habiles) * 100, 1)
+
+    # --- KPI 7: Zona más demandada (top 10 series) ---
+    zona_top = int(df_ts.groupby("PULocationID")["total_viajes"].sum().idxmax())
+    top_zones_names = {
+        161: "Midtown Center",
+        237: "Upper East Side S.",
+        236: "Upper East Side N.",
+        132: "JFK Airport",
+        230: "Times Sq/Theatre",
+        186: "Penn Station",
+        162: "Midtown East",
+        142: "Lincoln Square E.",
+        239: "Upper West Side S.",
+        163: "Midtown North",
+    }
+    zona_top_nombre = top_zones_names.get(zona_top, str(zona_top))
+
+    # --- KPI 8: Zonas únicas activas ---
+    zonas_activas = int(df_geo[["lat_bin", "lon_bin"]].drop_duplicates().shape[0])
+
+    return {
+        "total_viajes": total_viajes,
+        "promedio_diario": int(promedio_diario),
+        "hora_pico": hora_pico,
+        "viajes_hora_pico": viajes_hora_pico,
+        "hora_valle": hora_valle,
+        "ratio_pico_valle": ratio_pico_valle,
+        "variacion_finde_pct": variacion_finde_pct,
+        "zona_top_id": zona_top,
+        "zona_top_nombre": zona_top_nombre,
+        "zonas_activas": zonas_activas,
+    }
 
 
 @app.get("/trips/heatmap", tags=["Geoespacial"])
@@ -55,6 +128,66 @@ def get_heatmap_data(
     points = heatmap_data[["lat_bin", "lon_bin", "viajes"]].values.tolist()
 
     return {"hour": hour, "total_points": len(points), "data": points}
+
+
+@app.get("/trips/top_zones", tags=["Geoespacial"])
+def get_top_zones(
+    hour: int = Query(..., ge=0, le=23, description="Hora del día (0-23)"),
+    n: int = Query(5, ge=1, le=20, description="Número de zonas top a retornar"),
+):
+    """
+    Retorna las N coordenadas con mayor volumen de viajes para la hora dada.
+    Se usa para pintar marcadores sobre el heatmap de Folium.
+    """
+    if df_geo.empty:
+        raise HTTPException(status_code=500, detail="Data not loaded")
+
+    df_hour = df_geo[df_geo["hora_dia"] == hour]
+    top = (
+        df_hour.groupby(["lat_bin", "lon_bin"])["viajes"]
+        .sum()
+        .reset_index()
+        .sort_values("viajes", ascending=False)
+        .head(n)
+    )
+
+    # Mapa de zonas conocidas lat/lon aproximado para nearest-neighbor simple
+    known_zones = {
+        161: ("Midtown Center", 40.755, -73.987),
+        237: ("Upper East Side South", 40.765, -73.958),
+        236: ("Upper East Side North", 40.775, -73.953),
+        132: ("JFK Airport", 40.641, -73.778),
+        230: ("Times Sq / Theatre District", 40.758, -73.990),
+        186: ("Penn Station / Madison Sq W", 40.750, -73.994),
+        162: ("Midtown East", 40.752, -73.974),
+        142: ("Lincoln Square East", 40.774, -73.983),
+        239: ("Upper West Side South", 40.776, -73.981),
+        163: ("Midtown North", 40.760, -73.982),
+    }
+
+    zonas = []
+    for rank, (_, row) in enumerate(top.iterrows(), start=1):
+        lat = round(float(row["lat_bin"]), 4)
+        lon = round(float(row["lon_bin"]), 4)
+        # Nearest-neighbor: zona conocida más cercana
+        zona_nombre = "Zona desconocida"
+        min_dist = float("inf")
+        for _, (nombre, zlat, zlon) in known_zones.items():
+            dist = ((lat - zlat) ** 2 + (lon - zlon) ** 2) ** 0.5
+            if dist < min_dist:
+                min_dist = dist
+                zona_nombre = nombre
+        zonas.append(
+            {
+                "rank": rank,
+                "lat": lat,
+                "lon": lon,
+                "viajes": int(row["viajes"]),
+                "nombre": zona_nombre,
+            }
+        )
+
+    return {"hour": hour, "top_n": n, "zones": zonas}
 
 
 @app.get("/trips/demand_curve", tags=["Temporal"])
@@ -112,7 +245,10 @@ def predict_demand(
         237, description="ID de la zona de taxi (Ej: 237 para Upper East Side)"
     ),
     hours: int = Query(
-        24, ge=12, le=168, description="Horizonte de predicción en horas (12h a 7 días)"
+        24,
+        ge=12,
+        le=8760,
+        description="Horizonte de predicción en horas (12h a 8760h = 1 año)",
     ),
     model: str = Query("prophet", description="Modelo a usar: 'prophet' o 'sarima'"),
 ):
