@@ -267,11 +267,17 @@ def predict_demand(
     """
     Genera un pronóstico de la demanda de viajes para una zona específica.
     """
+    import traceback
+
+    print(f"[PREDICT] Iniciando: zone_id={zone_id}, hours={hours}, model={model}")
+
     if df_ts.empty:
+        print("[PREDICT] ❌ df_ts está vacío")
         raise HTTPException(status_code=500, detail="Time series data not loaded")
 
     # Extraer data de la zona
     df_zone = df_ts[df_ts["PULocationID"] == zone_id][["hora", "total_viajes"]].copy()
+    print(f"[PREDICT] Filas para zona {zone_id}: {len(df_zone)}")
     if df_zone.empty:
         raise HTTPException(
             status_code=404, detail=f"Zone ID {zone_id} not found in the Top 10 dataset"
@@ -279,54 +285,71 @@ def predict_demand(
 
     df_zone.set_index("hora", inplace=True)
     df_zone.sort_index(inplace=True)
+    print(f"[PREDICT] Rango de datos: {df_zone.index.min()} → {df_zone.index.max()}")
 
     predictions = []
     future_dates = []
 
     if model.lower() == "prophet":
         try:
-            # Preparar data para Prophet
+            print("[PREDICT] Prophet: preparando datos...")
             df_p = df_zone.reset_index().rename(
                 columns={"hora": "ds", "total_viajes": "y"}
             )
+            print(f"[PREDICT] Prophet: df_p shape={df_p.shape}, dtypes={df_p.dtypes.to_dict()}")
+
             m = Prophet(
                 yearly_seasonality=False,
                 weekly_seasonality=True,
                 daily_seasonality=True,
             )
+            print("[PREDICT] Prophet: entrenando (fit)...")
             m.fit(df_p)
+            print("[PREDICT] Prophet: fit completado ✅")
 
+            print(f"[PREDICT] Prophet: generando future dataframe ({hours} horas)...")
             future = m.make_future_dataframe(periods=hours, freq="h")
-            forecast = m.predict(future)
+            print(f"[PREDICT] Prophet: future shape={future.shape}")
 
-            # Extraer solo el futuro
+            print("[PREDICT] Prophet: prediciendo...")
+            forecast = m.predict(future)
+            print(f"[PREDICT] Prophet: forecast shape={forecast.shape}")
+
             future_forecast = forecast.tail(hours)
             future_dates = future_forecast["ds"].astype(str).tolist()
             predictions = (
                 future_forecast["yhat"].clip(lower=0).round(0).tolist()
-            )  # No viajes negativos
+            )
+            print(f"[PREDICT] Prophet: ✅ {len(predictions)} predicciones generadas")
         except Exception as e:
-            import traceback
-
             error_details = traceback.format_exc()
+            print(f"[PREDICT] Prophet ❌ ERROR: {str(e)}")
+            print(f"[PREDICT] Prophet ❌ TRACEBACK:\n{error_details}")
             raise HTTPException(
                 status_code=500, detail=f"Error Prophet: {str(e)}\n{error_details}"
             )
 
     elif model.lower() == "sarima":
-        # SARIMA toma más tiempo, pero lo entrenamos on the fly
         try:
+            print("[PREDICT] SARIMA: configurando modelo...")
             m_sarima = SARIMAX(
                 df_zone["total_viajes"], order=(1, 0, 1), seasonal_order=(1, 0, 1, 24)
             )
+            print("[PREDICT] SARIMA: entrenando (fit)...")
             res = m_sarima.fit(disp=False)
+            print("[PREDICT] SARIMA: fit completado ✅")
 
+            print(f"[PREDICT] SARIMA: pronosticando {hours} pasos...")
             pred = res.forecast(steps=hours)
             future_dates = pred.index.astype(str).tolist()
             predictions = pred.clip(lower=0).round(0).tolist()
+            print(f"[PREDICT] SARIMA: ✅ {len(predictions)} predicciones generadas")
         except Exception as e:
+            error_details = traceback.format_exc()
+            print(f"[PREDICT] SARIMA ❌ ERROR: {str(e)}")
+            print(f"[PREDICT] SARIMA ❌ TRACEBACK:\n{error_details}")
             raise HTTPException(
-                status_code=500, detail=f"Error entrenando SARIMA: {str(e)}"
+                status_code=500, detail=f"Error SARIMA: {str(e)}\n{error_details}"
             )
     else:
         raise HTTPException(

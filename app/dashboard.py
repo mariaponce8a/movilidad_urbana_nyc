@@ -480,10 +480,10 @@ with tab3:
                                 )
                             )
                         else:
-                            st.error(f"Error de la API para {model}: {res.text}")
+                            st.error(f"Error de la API para {model} (HTTP {res.status_code}): {res.text[:500]}")
                     except Exception as e:
                         st.error(
-                            f"Asegúrate de tener la API corriendo. Error conectando para {model}."
+                            f"Error conectando con la API para {model}: {str(e)}"
                         )
 
                 fig3.update_layout(
