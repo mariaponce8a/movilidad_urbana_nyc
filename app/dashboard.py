@@ -15,7 +15,7 @@ st.set_page_config(page_title="NYC Taxi Mobility Dashboard", layout="wide")
 
 # En producción, definir la variable de entorno API_URL con la URL de Render
 # En local, usa http://localhost:8000 automáticamente
-API_URL = os.environ.get("API_URL", "http://localhost:8000").rstrip("/")
+API_URL = "https://movilidad-urbana-nyc-oue1.onrender.com"
 
 st.title("Análisis de Demanda y Predicción de Movilidad - NYC")
 st.markdown(
