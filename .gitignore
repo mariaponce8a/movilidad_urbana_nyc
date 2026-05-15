@@ -215,4 +215,7 @@ datos/interim/*
 !datos/interim/.gitkeep
 datos/procesados/*
 !datos/procesados/.gitkeep
+!datos/procesados/demanda_geo_agregada.parquet
+!datos/procesados/demanda_top10_series_tiempo.parquet
+!datos/procesados/demanda_por_zona.csv
 parquet/yellow_tripdata_2025-01.parquet
