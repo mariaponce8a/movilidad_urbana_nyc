@@ -1,3 +1,4 @@
+import os
 import streamlit as st
 import requests
 import folium
@@ -12,7 +13,9 @@ import pandas as pd
 # Configuración de página
 st.set_page_config(page_title="NYC Taxi Mobility Dashboard", layout="wide")
 
-API_URL = "http://localhost:8000"
+# En producción, definir la variable de entorno API_URL con la URL de Render
+# En local, usa http://localhost:8000 automáticamente
+API_URL = os.environ.get("API_URL", "http://localhost:8000").rstrip("/")
 
 st.title("Análisis de Demanda y Predicción de Movilidad - NYC")
 st.markdown(
