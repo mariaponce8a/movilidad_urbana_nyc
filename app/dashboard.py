@@ -82,9 +82,6 @@ except Exception:
     st.markdown("---")
 
 
-
-
-
 # --- DATOS TOP 10 ZONAS (Coordenadas para Mapa) ---
 top10_zones_info = {
     161: {"name": "Midtown Center", "lat": 40.7600, "lon": -73.9800},
@@ -329,12 +326,14 @@ with tab2:
 
 # --- PESTAÑA 3: PREDICCIONES (IA) ---
 with tab3:
+    import datetime as dt
+
     st.markdown("**Configuración de la Predicción**")
 
     # Diccionario auxiliar {zone_id: nombre} construido desde top10_zones_info
     top10_zones = {zid: info["name"] for zid, info in top10_zones_info.items()}
 
-    col_ctrl1, col_ctrl2, col_ctrl3 = st.columns([2, 2, 1])
+    col_ctrl1, col_ctrl2 = st.columns([2, 2])
 
     with col_ctrl1:
         selected_zone_name = st.selectbox(
@@ -353,26 +352,46 @@ with tab3:
             default=["Prophet", "SARIMA"],
         )
 
-    with col_ctrl3:
-        forecast_horizon = st.selectbox(
-            "Horizonte (horas):",
-            options=[24, 48, 72, 168, 720, 8760],
-            format_func=lambda h: {
-                24: "24 h (1 día)",
-                48: "48 h (2 días)",
-                72: "72 h (3 días)",
-                168: "7 días",
-                720: "1 mes",
-                8760: "1 año",
-            }.get(h, f"{h} h"),
-            index=0,
+    # --- FILTRO DE RANGO DE FECHAS ---
+    st.markdown("**Rango de fechas para la predicción**")
+    hoy = dt.date.today()
+    fecha_min = dt.date(2025, 2, 1)  # primer día predicible tras datos de enero 2025
+    fecha_max = hoy + dt.timedelta(days=365)
+    col_fecha1, col_fecha2 = st.columns(2)
+    with col_fecha1:
+        fecha_inicio = st.date_input(
+            "Fecha de inicio del pronóstico:",
+            value=hoy,
+            min_value=fecha_min,
+            max_value=fecha_max,
+            key="pred_fecha_inicio",
+        )
+    with col_fecha2:
+        fecha_fin = st.date_input(
+            "Fecha de fin del pronóstico:",
+            value=hoy + dt.timedelta(days=7),
+            min_value=fecha_min + dt.timedelta(days=1),
+            max_value=fecha_max,
+            key="pred_fecha_fin",
+        )
+
+    # Validar rango y calcular horizonte en horas
+    if fecha_fin <= fecha_inicio:
+        st.warning("⚠️ La fecha de fin debe ser posterior a la fecha de inicio.")
+        forecast_horizon = 24
+        fecha_valida = False
+    else:
+        delta_dias = (fecha_fin - fecha_inicio).days
+        forecast_horizon = delta_dias * 24  # horas totales del rango
+        fecha_valida = True
+        st.caption(
+            f"📅 Rango seleccionado: **{fecha_inicio.strftime('%d %b %Y')}** → **{fecha_fin.strftime('%d %b %Y')}** "
+            f"({delta_dias} día{'s' if delta_dias != 1 else ''} · {forecast_horizon} horas)"
         )
 
     st.markdown("---")
 
-    st.subheader(
-        f"Predicción: Zona {selected_zone} ({top10_zones[selected_zone]})"
-    )
+    st.subheader(f"Predicción: Zona {selected_zone} ({top10_zones[selected_zone]})")
     st.markdown(
         "Utiliza modelos matemáticos para pronosticar la curva de demanda de las próximas horas/días."
     )
@@ -395,17 +414,29 @@ with tab3:
     if st.button("Ejecutar Entrenamiento y Generar Pronóstico"):
         if not selected_models:
             st.warning("Por favor, selecciona al menos un modelo predictivo.")
+        elif not fecha_valida:
+            st.warning("Por favor, corrige el rango de fechas antes de continuar.")
         else:
             with st.spinner(
-                f"Entrenando modelos en tiempo real y prediciendo {forecast_horizon} horas..."
+                f"Entrenando modelos y generando pronóstico del {fecha_inicio} al {fecha_fin} ({forecast_horizon} h)..."
             ):
+                # Ventana temporal de inicio (en horas desde ahora)
+                horas_offset = int(
+                    (
+                        dt.datetime.combine(fecha_inicio, dt.time()) - dt.datetime.now()
+                    ).total_seconds()
+                    / 3600
+                )
+                horas_offset = max(horas_offset, 0)
+
                 fig3 = go.Figure()
-                results_summary = {}
 
                 for model in selected_models:
                     try:
+                        # Pedimos todas las horas necesarias desde ahora hasta fecha_fin
+                        horas_totales = horas_offset + forecast_horizon
                         res = requests.get(
-                            f"{API_URL}/trips/predict?zone_id={selected_zone}&hours={forecast_horizon}&model={model.lower()}"
+                            f"{API_URL}/trips/predict?zone_id={selected_zone}&hours={horas_totales}&model={model.lower()}"
                         )
                         if res.status_code == 200:
                             pred_data = res.json()
@@ -418,8 +449,23 @@ with tab3:
                                 }
                             )
 
+                            # Filtrar al rango de fechas seleccionado
+                            fecha_inicio_dt = pd.Timestamp(fecha_inicio)
+                            fecha_fin_dt = pd.Timestamp(fecha_fin) + pd.Timedelta(
+                                hours=23
+                            )
+                            df_pred = df_pred[
+                                (df_pred["Fecha/Hora"] >= fecha_inicio_dt)
+                                & (df_pred["Fecha/Hora"] <= fecha_fin_dt)
+                            ]
+
+                            if df_pred.empty:
+                                st.warning(
+                                    f"No hay datos predichos en el rango para {model}."
+                                )
+                                continue
+
                             color = "blue" if model == "Prophet" else "red"
-                            # Quitar puntos si es más de 1 semana para no saturar la vista
                             graf_mode = (
                                 "lines+markers" if forecast_horizon <= 168 else "lines"
                             )
@@ -440,16 +486,22 @@ with tab3:
                         )
 
                 fig3.update_layout(
-                    title=f"Comparativa Predictiva (Zona {selected_zone}): Próximas {forecast_horizon} horas",
+                    title=f"Pronóstico {fecha_inicio.strftime('%d %b')} – {fecha_fin.strftime('%d %b %Y')} · Zona {selected_zone} ({top10_zones[selected_zone]})",
                     xaxis_title="Fecha y Hora",
                     yaxis_title="Volumen de Viajes",
                     hovermode="x unified",
                     template="plotly_white",
+                    xaxis=dict(
+                        range=[
+                            pd.Timestamp(fecha_inicio),
+                            pd.Timestamp(fecha_fin) + pd.Timedelta(hours=23),
+                        ]
+                    ),
                     legend=dict(
                         orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1
                     ),
                 )
                 st.plotly_chart(fig3, use_container_width=True)
                 st.info(
-                    "💡 **Insight de Negocio:** Prophet (Línea Azul) logra proyectar y adaptarse de manera más real a los picos atípicos de tráfico en las horas punta de las tardes, mientras que SARIMA (Línea Roja) suaviza excesivamente la curva apostando al promedio histórico. Recomendamos a la gerencia utilizar Prophet para la proyección del dimensionamiento de la flota a largo plazo."
+                    "**Insight de Negocio:** Prophet (Línea Azul) logra proyectar y adaptarse de manera más real a los picos atípicos de tráfico en las horas punta de las tardes, mientras que SARIMA (Línea Roja) suaviza excesivamente la curva apostando al promedio histórico. Recomendamos a la gerencia utilizar Prophet para la proyección del dimensionamiento de la flota a largo plazo."
                 )
