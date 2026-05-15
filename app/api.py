@@ -17,14 +17,26 @@ app = FastAPI(
 # --- CARGA DE DATOS EN MEMORIA ---
 # Se cargan al iniciar la API para que las peticiones sean ultrarrápidas
 DATA_PATH = os.path.join(os.path.dirname(__file__), "..", "datos", "procesados")
+DATA_PATH = os.path.abspath(DATA_PATH)  # resolver a ruta absoluta
+
+print(f"[STARTUP] Buscando datos en: {DATA_PATH}")
+print(f"[STARTUP] ¿Existe el directorio? {os.path.isdir(DATA_PATH)}")
+if os.path.isdir(DATA_PATH):
+    print(f"[STARTUP] Archivos encontrados: {os.listdir(DATA_PATH)}")
+else:
+    print(f"[STARTUP] Contenido de app/: {os.listdir(os.path.dirname(__file__))}")
+    project_root = os.path.join(os.path.dirname(__file__), "..")
+    print(f"[STARTUP] Contenido de raíz: {os.listdir(project_root)}")
 
 try:
     df_geo = pd.read_parquet(os.path.join(DATA_PATH, "demanda_geo_agregada.parquet"))
     df_ts = pd.read_parquet(
         os.path.join(DATA_PATH, "demanda_top10_series_tiempo.parquet")
     )
-except FileNotFoundError:
-    print("Error: No se encontraron los archivos Parquet en datos/procesados/")
+    print(f"[STARTUP] ✅ Datos cargados: df_geo={df_geo.shape}, df_ts={df_ts.shape}")
+except FileNotFoundError as e:
+    print(f"[STARTUP] ❌ Error FileNotFoundError: {e}")
+    print(f"[STARTUP] ❌ No se encontraron los archivos Parquet en {DATA_PATH}")
     df_geo = pd.DataFrame()
     df_ts = pd.DataFrame()
 
