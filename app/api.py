@@ -44,7 +44,10 @@ except FileNotFoundError as e:
 RAW_PATH = os.path.join(os.path.dirname(__file__), "..", "datos", "raw")
 try:
     df_lookup = pd.read_csv(os.path.join(RAW_PATH, "taxi_zone_lookup.csv"))
-except Exception:
+except Exception as e:
+    print(
+        "[STARTUP] ❌ No se encontraron los archivos Parquet en datos/raw/taxi_zone_lookup.csv {e}"
+    )
     df_lookup = pd.DataFrame()
 
 
@@ -267,9 +270,10 @@ def predict_demand(
     """
     Genera un pronóstico de la demanda de viajes para una zona específica.
     """
-    import traceback
 
     print(f"[PREDICT] Iniciando: zone_id={zone_id}, hours={hours}, model={model}")
+
+    import traceback
 
     if df_ts.empty:
         print("[PREDICT] ❌ df_ts está vacío")
@@ -296,7 +300,9 @@ def predict_demand(
             df_p = df_zone.reset_index().rename(
                 columns={"hora": "ds", "total_viajes": "y"}
             )
-            print(f"[PREDICT] Prophet: df_p shape={df_p.shape}, dtypes={df_p.dtypes.to_dict()}")
+            print(
+                f"[PREDICT] Prophet: df_p shape={df_p.shape}, dtypes={df_p.dtypes.to_dict()}"
+            )
 
             m = Prophet(
                 yearly_seasonality=False,
@@ -317,9 +323,7 @@ def predict_demand(
 
             future_forecast = forecast.tail(hours)
             future_dates = future_forecast["ds"].astype(str).tolist()
-            predictions = (
-                future_forecast["yhat"].clip(lower=0).round(0).tolist()
-            )
+            predictions = future_forecast["yhat"].clip(lower=0).round(0).tolist()
             print(f"[PREDICT] Prophet: ✅ {len(predictions)} predicciones generadas")
         except Exception as e:
             error_details = traceback.format_exc()
