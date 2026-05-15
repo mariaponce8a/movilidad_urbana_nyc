@@ -423,23 +423,21 @@ with tab3:
             with st.spinner(
                 f"Entrenando modelos y generando pronóstico del {fecha_inicio} al {fecha_fin} ({forecast_horizon} h)..."
             ):
-                # Ventana temporal de inicio (en horas desde ahora)
-                horas_offset = int(
-                    (
-                        dt.datetime.combine(fecha_inicio, dt.time()) - dt.datetime.now()
-                    ).total_seconds()
-                    / 3600
+                # Los modelos predicen DESDE el fin de los datos de entrenamiento (31 ene 2025)
+                fin_entrenamiento = dt.date(2025, 1, 31)
+                # Calcular horas desde fin de entrenamiento hasta fecha_fin del usuario
+                horas_totales = max(
+                    int((dt.datetime.combine(fecha_fin, dt.time(23, 0)) - dt.datetime.combine(fin_entrenamiento, dt.time())).total_seconds() / 3600),
+                    24,
                 )
-                horas_offset = max(horas_offset, 0)
 
                 fig3 = go.Figure()
 
                 for model in selected_models:
                     try:
-                        # Pedimos todas las horas necesarias desde ahora hasta fecha_fin
-                        horas_totales = horas_offset + forecast_horizon
                         res = requests.get(
-                            f"{API_URL}/trips/predict?zone_id={selected_zone}&hours={horas_totales}&model={model.lower()}"
+                            f"{API_URL}/trips/predict?zone_id={selected_zone}&hours={horas_totales}&model={model.lower()}",
+                            timeout=120,
                         )
                         if res.status_code == 200:
                             pred_data = res.json()
