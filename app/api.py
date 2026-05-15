@@ -259,8 +259,8 @@ def predict_demand(
     hours: int = Query(
         24,
         ge=12,
-        le=8760,
-        description="Horizonte de predicción en horas (12h a 8760h = 1 año)",
+        le=17520,
+        description="Horizonte de predicción en horas (12h a 17520h = 2 años)",
     ),
     model: str = Query("prophet", description="Modelo a usar: 'prophet' o 'sarima'"),
 ):
