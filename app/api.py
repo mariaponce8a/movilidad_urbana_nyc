@@ -52,11 +52,23 @@ except Exception as e:
 
 
 import pickle
+import json
 from statsmodels.tsa.statespace.sarimax import SARIMAXResults
 
 # --- CACHE DE MODELOS PRE-ENTRENADOS ---
 MODELOS_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "modelos"))
 LOADED_MODELS = {"prophet": {}, "sarima": {}}
+
+# Metadatos de SARIMA: nobs y last_date por zona (necesarios para re-attachar fechas
+# que remove_data() elimina al serializar el modelo)
+SARIMA_META = {}
+_sarima_meta_path = os.path.join(MODELOS_PATH, "sarima_metadata.json")
+if os.path.exists(_sarima_meta_path):
+    with open(_sarima_meta_path, "r") as _f:
+        SARIMA_META = json.load(_f)
+    print(f"[STARTUP] [OK] sarima_metadata.json cargado: {list(SARIMA_META.keys())} zonas")
+else:
+    print(f"[STARTUP] [WARN] No se encontro sarima_metadata.json en {MODELOS_PATH}")
 
 def load_prophet_model(zone_id: int):
     if zone_id in LOADED_MODELS["prophet"]:
@@ -72,16 +84,15 @@ def load_prophet_model(zone_id: int):
     return model
 
 def load_sarima_model(zone_id: int):
-    if zone_id in LOADED_MODELS["sarima"]:
-        return LOADED_MODELS["sarima"][zone_id]
-        
+    """Carga modelo SARIMA bajo demanda (sin cachear para ahorrar RAM).
+    Cada modelo pesa ~76MB, asi que cargamos uno a la vez."""
     model_file = os.path.join(MODELOS_PATH, f"sarima_{zone_id}.pkl")
     if not os.path.exists(model_file):
         raise FileNotFoundError(f"Model file {model_file} not found.")
         
-    model = SARIMAXResults.load(model_file)
-    LOADED_MODELS["sarima"][zone_id] = model
-    return model
+    with open(model_file, "rb") as f:
+        res = pickle.load(f)
+    return res
 
 
 @app.get("/", tags=["Health"])

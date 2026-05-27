@@ -30,6 +30,7 @@ def entrenar_y_evaluar_modelos():
     print(f"Zonas a procesar ({len(zonas)}): {zonas}")
     
     metricas_globales = {}
+    sarima_metadata = {}  # Para guardar nobs y last_date por zona
     
     for zone_id in zonas:
         print(f"\n--- Procesando Zona ID: {zone_id} ---")
@@ -108,6 +109,12 @@ def entrenar_y_evaluar_modelos():
         )
         res_sarima_final = m_sarima_final.fit(disp=False)
         
+        # Guardar metadatos antes de remove_data() (las fechas se pierden al aplicarlo)
+        sarima_metadata[str(zone_id)] = {
+            "nobs": int(res_sarima_final.nobs),
+            "last_date": str(full_series.index[-1])
+        }
+        
         # Guardar modelos
         file_prophet = os.path.join(ruta_modelos, f"prophet_{zone_id}.pkl")
         file_sarima = os.path.join(ruta_modelos, f"sarima_{zone_id}.pkl")
@@ -115,10 +122,12 @@ def entrenar_y_evaluar_modelos():
         with open(file_prophet, "wb") as f:
             pickle.dump(m_prophet_final, f)
         
-        # remove_data() elimina los datos de entrenamiento del objeto serializado
-        # Reduce el tamaño de ~76 MB a ~1 MB. El modelo sigue pudiendo hacer forecast().
-        res_sarima_final.remove_data()
-        res_sarima_final.save(file_sarima)
+        # Guardar SARIMA con pickle (modelo completo, sin remove_data).
+        # remove_data() destruye estado interno del filtro de Kalman que
+        # forecast() necesita (endog, representation, etc.), causando errores.
+        # El modelo pesa ~76 MB pero se carga bajo demanda, 1 a la vez.
+        with open(file_sarima, "wb") as f:
+            pickle.dump(res_sarima_final, f)
         
         print(f"  [OK] Modelos para Zona {zone_id} guardados exitosamente.")
         
@@ -126,9 +135,15 @@ def entrenar_y_evaluar_modelos():
     ruta_metricas = os.path.join(ruta_modelos, "metricas_evaluacion.json")
     with open(ruta_metricas, "w") as f:
         json.dump(metricas_globales, f, indent=4)
+    
+    # Guardar metadatos de SARIMA (nobs y last_date por zona)
+    ruta_meta = os.path.join(ruta_modelos, "sarima_metadata.json")
+    with open(ruta_meta, "w") as f:
+        json.dump(sarima_metadata, f, indent=4)
         
     print("\n=== PROCESO COMPLETADO CON EXITO ===")
     print(f"Metricas guardadas en: {ruta_metricas}")
+    print(f"Metadatos SARIMA guardados en: {ruta_meta}")
 
 if __name__ == "__main__":
     entrenar_y_evaluar_modelos()
