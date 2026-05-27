@@ -33,10 +33,10 @@ try:
     df_ts = pd.read_parquet(
         os.path.join(DATA_PATH, "demanda_top10_series_tiempo.parquet")
     )
-    print(f"[STARTUP] ✅ Datos cargados: df_geo={df_geo.shape}, df_ts={df_ts.shape}")
+    print(f"[STARTUP] [OK] Datos cargados: df_geo={df_geo.shape}, df_ts={df_ts.shape}")
 except FileNotFoundError as e:
-    print(f"[STARTUP] ❌ Error FileNotFoundError: {e}")
-    print(f"[STARTUP] ❌ No se encontraron los archivos Parquet en {DATA_PATH}")
+    print(f"[STARTUP] [ERROR] FileNotFoundError: {e}")
+    print(f"[STARTUP] [ERROR] No se encontraron los archivos Parquet en {DATA_PATH}")
     df_geo = pd.DataFrame()
     df_ts = pd.DataFrame()
 
@@ -46,9 +46,42 @@ try:
     df_lookup = pd.read_csv(os.path.join(RAW_PATH, "taxi_zone_lookup.csv"))
 except Exception as e:
     print(
-        "[STARTUP] ❌ No se encontraron los archivos Parquet en datos/raw/taxi_zone_lookup.csv {e}"
+        "[STARTUP] [ERROR] No se encontraron los archivos Parquet en datos/raw/taxi_zone_lookup.csv {e}"
     )
     df_lookup = pd.DataFrame()
+
+
+import pickle
+from statsmodels.tsa.statespace.sarimax import SARIMAXResults
+
+# --- CACHE DE MODELOS PRE-ENTRENADOS ---
+MODELOS_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "modelos"))
+LOADED_MODELS = {"prophet": {}, "sarima": {}}
+
+def load_prophet_model(zone_id: int):
+    if zone_id in LOADED_MODELS["prophet"]:
+        return LOADED_MODELS["prophet"][zone_id]
+    
+    model_file = os.path.join(MODELOS_PATH, f"prophet_{zone_id}.pkl")
+    if not os.path.exists(model_file):
+        raise FileNotFoundError(f"Model file {model_file} not found.")
+        
+    with open(model_file, "rb") as f:
+        model = pickle.load(f)
+    LOADED_MODELS["prophet"][zone_id] = model
+    return model
+
+def load_sarima_model(zone_id: int):
+    if zone_id in LOADED_MODELS["sarima"]:
+        return LOADED_MODELS["sarima"][zone_id]
+        
+    model_file = os.path.join(MODELOS_PATH, f"sarima_{zone_id}.pkl")
+    if not os.path.exists(model_file):
+        raise FileNotFoundError(f"Model file {model_file} not found.")
+        
+    model = SARIMAXResults.load(model_file)
+    LOADED_MODELS["sarima"][zone_id] = model
+    return model
 
 
 @app.get("/", tags=["Health"])
@@ -268,7 +301,7 @@ def predict_demand(
     model: str = Query("prophet", description="Modelo a usar: 'prophet' o 'sarima'"),
 ):
     """
-    Genera un pronóstico de la demanda de viajes para una zona específica.
+    Genera un pronóstico de la demanda de viajes para una zona específica utilizando modelos pre-entrenados.
     """
 
     print(f"[PREDICT] Iniciando: zone_id={zone_id}, hours={hours}, model={model}")
@@ -276,42 +309,30 @@ def predict_demand(
     import traceback
 
     if df_ts.empty:
-        print("[PREDICT] ❌ df_ts está vacío")
+        print("[PREDICT] [ERROR] df_ts está vacío")
         raise HTTPException(status_code=500, detail="Time series data not loaded")
 
-    # Extraer data de la zona
-    df_zone = df_ts[df_ts["PULocationID"] == zone_id][["hora", "total_viajes"]].copy()
-    print(f"[PREDICT] Filas para zona {zone_id}: {len(df_zone)}")
+    # Verificar que la zona exista en los datos
+    df_zone = df_ts[df_ts["PULocationID"] == zone_id]
     if df_zone.empty:
         raise HTTPException(
             status_code=404, detail=f"Zone ID {zone_id} not found in the Top 10 dataset"
         )
-
-    df_zone.set_index("hora", inplace=True)
-    df_zone.sort_index(inplace=True)
-    print(f"[PREDICT] Rango de datos: {df_zone.index.min()} → {df_zone.index.max()}")
 
     predictions = []
     future_dates = []
 
     if model.lower() == "prophet":
         try:
-            print("[PREDICT] Prophet: preparando datos...")
-            df_p = df_zone.reset_index().rename(
-                columns={"hora": "ds", "total_viajes": "y"}
-            )
-            print(
-                f"[PREDICT] Prophet: df_p shape={df_p.shape}, dtypes={df_p.dtypes.to_dict()}"
-            )
-
-            m = Prophet(
-                yearly_seasonality=False,
-                weekly_seasonality=True,
-                daily_seasonality=True,
-            )
-            print("[PREDICT] Prophet: entrenando (fit)...")
-            m.fit(df_p)
-            print("[PREDICT] Prophet: fit completado ✅")
+            print(f"[PREDICT] Prophet: Cargando modelo para zona {zone_id}...")
+            try:
+                m = load_prophet_model(zone_id)
+            except FileNotFoundError:
+                raise HTTPException(
+                    status_code=404, 
+                    detail=f"Model files not found for zone {zone_id}. Please run scripts/entrenar_modelos.py first."
+                )
+            print("[PREDICT] Prophet: Modelo cargado [OK]")
 
             print(f"[PREDICT] Prophet: generando future dataframe ({hours} horas)...")
             future = m.make_future_dataframe(periods=hours, freq="h")
@@ -324,37 +345,44 @@ def predict_demand(
             future_forecast = forecast.tail(hours)
             future_dates = future_forecast["ds"].astype(str).tolist()
             predictions = future_forecast["yhat"].clip(lower=0).round(0).tolist()
-            print(f"[PREDICT] Prophet: ✅ {len(predictions)} predicciones generadas")
+            print(f"[PREDICT] Prophet: [OK] {len(predictions)} predicciones generadas")
+        except HTTPException:
+            raise
         except Exception as e:
             error_details = traceback.format_exc()
-            print(f"[PREDICT] Prophet ❌ ERROR: {str(e)}")
-            print(f"[PREDICT] Prophet ❌ TRACEBACK:\n{error_details}")
+            print(f"[PREDICT] Prophet [ERROR]: {str(e)}")
+            print(f"[PREDICT] Prophet [TRACEBACK]:\n{error_details}")
             raise HTTPException(
                 status_code=500, detail=f"Error Prophet: {str(e)}\n{error_details}"
             )
 
     elif model.lower() == "sarima":
         try:
-            print("[PREDICT] SARIMA: configurando modelo...")
-            m_sarima = SARIMAX(
-                df_zone["total_viajes"], order=(1, 0, 1), seasonal_order=(1, 0, 1, 24)
-            )
-            print("[PREDICT] SARIMA: entrenando (fit)...")
-            res = m_sarima.fit(disp=False)
-            print("[PREDICT] SARIMA: fit completado ✅")
+            print(f"[PREDICT] SARIMA: Cargando modelo para zona {zone_id}...")
+            try:
+                res = load_sarima_model(zone_id)
+            except FileNotFoundError:
+                raise HTTPException(
+                    status_code=404, 
+                    detail=f"Model files not found for zone {zone_id}. Please run scripts/entrenar_modelos.py first."
+                )
+            print("[PREDICT] SARIMA: Modelo cargado [OK]")
 
             print(f"[PREDICT] SARIMA: pronosticando {hours} pasos...")
             pred = res.forecast(steps=hours)
             future_dates = pred.index.astype(str).tolist()
             predictions = pred.clip(lower=0).round(0).tolist()
-            print(f"[PREDICT] SARIMA: ✅ {len(predictions)} predicciones generadas")
+            print(f"[PREDICT] SARIMA: [OK] {len(predictions)} predicciones generadas")
+        except HTTPException:
+            raise
         except Exception as e:
             error_details = traceback.format_exc()
-            print(f"[PREDICT] SARIMA ❌ ERROR: {str(e)}")
-            print(f"[PREDICT] SARIMA ❌ TRACEBACK:\n{error_details}")
+            print(f"[PREDICT] SARIMA [ERROR]: {str(e)}")
+            print(f"[PREDICT] SARIMA [TRACEBACK]:\n{error_details}")
             raise HTTPException(
                 status_code=500, detail=f"Error SARIMA: {str(e)}\n{error_details}"
             )
+      
     else:
         raise HTTPException(
             status_code=400, detail="Modelo no soportado. Usa 'prophet' o 'sarima'"

@@ -15,7 +15,7 @@ st.set_page_config(page_title="NYC Taxi Mobility Dashboard", layout="wide")
 
 # En producción, definir la variable de entorno API_URL con la URL de Render
 # En local, usa http://localhost:8000 automáticamente
-API_URL = "https://movilidad-urbana-nyc-oue1.onrender.com"
+API_URL = "http://localhost:8000" #"https://movilidad-urbana-nyc-oue1.onrender.com"
 
 st.title("Análisis de Demanda y Predicción de Movilidad - NYC")
 st.markdown(
@@ -414,14 +414,14 @@ with tab3:
             "- Si ambas curvas coinciden, la predicción es más confiable."
         )
 
-    if st.button("Ejecutar Entrenamiento y Generar Pronóstico"):
+    if st.button("Generar Pronóstico de Demanda"):
         if not selected_models:
             st.warning("Por favor, selecciona al menos un modelo predictivo.")
         elif not fecha_valida:
             st.warning("Por favor, corrige el rango de fechas antes de continuar.")
         else:
             with st.spinner(
-                f"Entrenando modelos y generando pronóstico del {fecha_inicio} al {fecha_fin} ({forecast_horizon} h)..."
+                f"Cargando modelos pre-entrenados y generando pronóstico del {fecha_inicio} al {fecha_fin} ({forecast_horizon} h)..."
             ):
                 # Los modelos predicen DESDE el fin de los datos de entrenamiento (31 ene 2025)
                 fin_entrenamiento = dt.date(2025, 1, 31)
