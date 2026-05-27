@@ -220,5 +220,6 @@ datos/procesados/*
 !datos/procesados/demanda_por_zona.csv
 parquet/yellow_tripdata_2025-01.parquet
 
-# Modelos entrenados (evitar subir archivos binarios pesados a Git)
-modelos/*.pkl
+# Modelos entrenados: se permiten los .pkl compactos (remove_data aplicado, ~1MB c/u)
+# Si los modelos vuelven a ser grandes (>50MB), descomentar la siguiente línea:
+# modelos/*.pkl

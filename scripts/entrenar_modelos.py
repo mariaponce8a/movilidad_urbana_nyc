@@ -114,7 +114,10 @@ def entrenar_y_evaluar_modelos():
         
         with open(file_prophet, "wb") as f:
             pickle.dump(m_prophet_final, f)
-            
+        
+        # remove_data() elimina los datos de entrenamiento del objeto serializado
+        # Reduce el tamaño de ~76 MB a ~1 MB. El modelo sigue pudiendo hacer forecast().
+        res_sarima_final.remove_data()
         res_sarima_final.save(file_sarima)
         
         print(f"  [OK] Modelos para Zona {zone_id} guardados exitosamente.")
